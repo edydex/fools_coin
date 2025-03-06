@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Betting Game</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .hidden {
+            display: none;
+        }
+        .player-card {
+            border: 1px solid #ccc;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+        .current-player {
+            border: 2px solid #4CAF50;
+        }
+        .round-info {
+            margin: 20px 0;
+            padding: 10px;
+            background-color: #f0f0f0;
+            border-radius: 5px;
+        }
+        .bet-form {
+            margin: 20px 0;
+        }
+        .bet-form input, .bet-form button {
+            padding: 8px;
+            margin-right: 10px;
+        }
+        .game-results {
+            margin-top: 20px;
+        }
+        .winner {
+            color: #4CAF50;
+            font-weight: bold;
+        }
+        .loser {
+            color: #f44336;
+        }
+        .btn {
+            padding: 10px 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        .btn:hover {
+            background-color: #45a049;
+        }
+        .btn:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <!-- Home screen -->
+    <div id="home-screen">
+        <h1>Welcome to the Betting Game</h1>
+        <div>
+            <h2>Create a new game</h2>
+            <button id="create-game" class="btn">Create Game</button>
+        </div>
+        <div>
+            <h2>Join an existing game</h2>
+            <div>
+                <input type="text" id="join-room-id" placeholder="Room ID">
+                <input type="text" id="player-name" placeholder="Your Name">
+                <button id="join-game" class="btn">Join Game</button>
+            </div>
+        </div>
+		<div>
+			<h2>Game Rules:</h2>
+			<p>You and your opponent start out with $100. This is all the money you will be working with. You need to manage your $100 better than your opponent, 
+			and out-bid him 3 times. You'll have to be crafty to achieve a Win here - you might need to give up some rounds to drain your opponenents money. Best way to learn is to try it yourself. Good luck. </p>
+		</div>
+    </div>
+
+    <!-- Waiting room -->
+    <div id="waiting-room" class="hidden">
+        <h1>Waiting Room</h1>
+        <div>
+            <h2>Game Room ID: <span id="room-id"></span></h2>
+            <p>Share this ID with your friends to join this game.</p>
+        </div>
+        <div>
+            <h2>Players:</h2>
+            <ul id="players-list"></ul>
+        </div>
+        <button id="start-game" class="btn">Start Game</button>
+    </div>
+
+    <!-- Game screen -->
+    <div id="game-screen" class="hidden">
+        <h1>Betting Game</h1>
+        <div class="round-info">
+            <h2>Round <span id="current-round"></span> of 5</h2>
+            <p>Your Money: $<span id="player-money"></span></p>
+        </div>
+        
+        <div id="betting-phase">
+            <h2>Place your bet</h2>
+            <form class="bet-form" id="bet-form">
+                <input type="number" id="bet-amount" placeholder="Bet amount" min="1">
+                <button type="submit" class="btn">Place Bet</button>
+            </form>
+        </div>
+        
+        <div id="round-results" class="hidden">
+            <h2>Round Results</h2>
+            <div id="round-winner"></div>
+            <h3>All Bets:</h3>
+            <ul id="round-bets"></ul>
+            <p>Waiting for next round...</p>
+        </div>
+        
+        <div id="players-info">
+            <h2>Players</h2>
+            <div id="players-cards"></div>
+        </div>
+    </div>
+
+    <!-- Game over screen -->
+    <div id="game-over-screen" class="hidden">
+        <h1>Game Over!</h1>
+        <div id="game-winner"></div>
+        <h2>Final Results:</h2>
+        <ul id="final-results"></ul>
+        <button id="play-again" class="btn">Play Again</button>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        // DOM elements
+        const homeScreen = document.getElementById('home-screen');
+        const waitingRoom = document.getElementById('waiting-room');
+        const gameScreen = document.getElementById('game-screen');
+        const gameOverScreen = document.getElementById('game-over-screen');
+        
+        // Game state
+        let socket;
+        let playerId;
+        let playerName;
+        let roomId;
+        let players = {};
+        let currentPlayerId;
+        
+        // Create a new game
+        document.getElementById('create-game').addEventListener('click', async () => {
+            try {
+                console.log("Create game button clicked!");
+                const response = await fetch('/api/create-room', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+                
+                const data = await response.json();
+                roomId = data.roomId;
+                
+                document.getElementById('room-id').textContent = roomId;
+                
+                // Prompt for player name
+                playerName = prompt('Enter your name:', 'Player 1');
+                if (!playerName) {
+                    playerName = 'Player 1';
+                }
+                
+                // Connect to socket.io
+                connectToSocketIO();
+                
+                // Show waiting room
+                homeScreen.classList.add('hidden');
+                waitingRoom.classList.remove('hidden');
+            } catch (error) {
+                console.error("Error creating room:", error);
+                alert("Error creating room. Check console for details.");
+            }
+        });
+        
+        // Join an existing game
+        document.getElementById('join-game').addEventListener('click', () => {
+            roomId = document.getElementById('join-room-id').value.trim();
+            playerName = document.getElementById('player-name').value.trim();
+            
+            if (!roomId) {
+                alert('Please enter a Room ID');
+                return;
+            }
+            
+            if (!playerName) {
+                playerName = 'Player ' + Math.floor(Math.random() * 1000);
+            }
+            
+            // Connect to socket.io
+            connectToSocketIO();
+            
+            // Show waiting room
+            homeScreen.classList.add('hidden');
+            waitingRoom.classList.remove('hidden');
+        });
+        
+        // Start the game
+        document.getElementById('start-game').addEventListener('click', () => {
+            socket.emit('startGame');
+        });
+        
+        // Place bet
+        document.getElementById('bet-form').addEventListener('submit', (e) => {
+            e.preventDefault();
+            
+            const betAmount = parseInt(document.getElementById('bet-amount').value);
+            if (isNaN(betAmount) || betAmount <= 0) {
+                alert('Please enter a valid bet amount');
+                return;
+            }
+            
+            // Client-side validation of bet amount
+            const playerMoney = players[playerId] ? players[playerId].money : 0;
+            if (betAmount > playerMoney) {
+                alert(`You don't have enough money! Your balance: ${playerMoney}`);
+                return;
+            }
+            
+            socket.emit('placeBet', { amount: betAmount });
+            
+            // Disable form after successful betting
+            document.getElementById('bet-form').classList.add('hidden');
+            document.getElementById('bet-amount').disabled = true;
+        });
+        
+        // Play again
+        document.getElementById('play-again').addEventListener('click', () => {
+            window.location.reload();
+        });
+        
+        // Connect to Socket.IO
+        function connectToSocketIO() {
+            console.log("Connecting to Socket.IO...");
+            socket = io();
+            
+            // Join room
+            socket.emit('joinRoom', { roomId, playerName });
+            
+            // Socket event handlers
+            socket.on('joinedRoom', (data) => {
+                console.log("Joined room:", data);
+                playerId = data.playerId;
+                updatePlayersList();
+            });
+            
+            socket.on('roomUpdate', (data) => {
+                console.log("Room update:", data);
+                players = {};
+                data.players.forEach(player => {
+                    players[player.id] = player;
+                });
+                updatePlayersList();
+            });
+            
+            socket.on('gameStarted', (data) => {
+                console.log("Game started:", data);
+                waitingRoom.classList.add('hidden');
+                gameScreen.classList.remove('hidden');
+                
+                document.getElementById('current-round').textContent = data.currentRound;
+                updatePlayerMoney();
+                updatePlayersCards();
+                
+                // Reset bet form
+                document.getElementById('bet-form').classList.remove('hidden');
+                document.getElementById('bet-amount').disabled = false;
+                document.getElementById('bet-amount').value = '';
+                document.getElementById('round-results').classList.add('hidden');
+            });
+            
+            socket.on('betPlaced', (data) => {
+                // Could show a notification or update UI
+                console.log(`${data.playerName} placed a bet of $${data.amount}`);
+            });
+            
+            socket.on('roundEnded', (data) => {
+                console.log("Round ended:", data);
+                document.getElementById('round-results').classList.remove('hidden');
+                document.getElementById('betting-phase').classList.add('hidden');
+                
+                // Update round winner
+                document.getElementById('round-winner').innerHTML = 
+                    `<h3 class="winner">Winner: ${data.winnerName}</h3>`;
+                
+                // Update bets list
+                const betsList = document.getElementById('round-bets');
+                betsList.innerHTML = '';
+                
+                Object.entries(data.bets).forEach(([pid, amount]) => {
+                    const player = data.players.find(p => p.id === pid);
+                    const li = document.createElement('li');
+                    li.textContent = `${player.name}: $${amount}`;
+                    if (pid === data.winnerId) {
+                        li.classList.add('winner');
+                    }
+                    betsList.appendChild(li);
+                });
+                
+                // Update players money and stats
+                players = {};
+                data.players.forEach(player => {
+                    players[player.id] = player;
+                });
+                
+                updatePlayerMoney();
+                updatePlayersCards();
+            });
+            
+            socket.on('roundStarted', (data) => {
+                console.log("Round started:", data);
+                document.getElementById('current-round').textContent = data.currentRound;
+                document.getElementById('betting-phase').classList.remove('hidden');
+                document.getElementById('round-results').classList.add('hidden');
+                
+                // Reset bet form
+                document.getElementById('bet-form').classList.remove('hidden');
+                document.getElementById('bet-amount').disabled = false;
+                document.getElementById('bet-amount').value = '';
+                
+                // Update players
+                players = {};
+                data.players.forEach(player => {
+                    players[player.id] = player;
+                });
+                
+                updatePlayerMoney();
+                updatePlayersCards();
+            });
+            
+            socket.on('gameEnded', (data) => {
+                console.log("Game ended:", data);
+                gameScreen.classList.add('hidden');
+                gameOverScreen.classList.remove('hidden');
+                
+                // Update game winner
+                document.getElementById('game-winner').innerHTML = 
+                    `<h2 class="winner">${data.winnerName} won the game with ${data.roundsWon} rounds!</h2>`;
+                
+                // Update final results
+                const finalResults = document.getElementById('final-results');
+                finalResults.innerHTML = '';
+                
+                data.players.forEach(player => {
+                    const li = document.createElement('li');
+                    li.innerHTML = `${player.name}: ${player.roundsWon} rounds won, $${player.money} remaining`;
+                    if (player.id === data.winnerId) {
+                        li.classList.add('winner');
+                    }
+                    finalResults.appendChild(li);
+                });
+            });
+            
+            socket.on('playerLeft', (data) => {
+                console.log("Player left:", data);
+                players = {};
+                data.players.forEach(player => {
+                    players[player.id] = player;
+                });
+                updatePlayersList();
+                updatePlayersCards();
+            });
+            
+            socket.on('error', (data) => {
+                console.error("Error:", data.message);
+                alert(data.message);
+                
+                // Make sure the betting form stays visible if there was an error
+                if (gameScreen.classList.contains('hidden') === false && 
+                    document.getElementById('betting-phase').classList.contains('hidden') === false) {
+                    document.getElementById('bet-form').classList.remove('hidden');
+                    document.getElementById('bet-amount').disabled = false;
+                }
+            });
+
+            socket.on('connect_error', (error) => {
+                console.error("Connection error:", error);
+                alert("Could not connect to the server. Please check if the server is running.");
+            });
+        }
+        
+        // Helper functions
+        function updatePlayersList() {
+            const playersList = document.getElementById('players-list');
+            playersList.innerHTML = '';
+            
+            Object.values(players).forEach(player => {
+                const li = document.createElement('li');
+                li.textContent = player.name;
+                playersList.appendChild(li);
+            });
+        }
+        
+        function updatePlayerMoney() {
+            if (players[playerId]) {
+                document.getElementById('player-money').textContent = players[playerId].money;
+            }
+        }
+        
+        function updatePlayersCards() {
+            const playersCards = document.getElementById('players-cards');
+            playersCards.innerHTML = '';
+            
+            Object.values(players).forEach(player => {
+                const card = document.createElement('div');
+                card.className = 'player-card';
+                if (player.id === playerId) {
+                    card.classList.add('current-player');
+                }
+                
+                card.innerHTML = `
+                    <h3>${player.name}</h3>
+                    <p>Money: $${player.money}</p>
+                    <p>Rounds Won: ${player.roundsWon}</p>
+                `;
+                
+                playersCards.appendChild(card);
+            });
+        }
+
+        // Test if JavaScript is running
+        console.log("JavaScript is loaded and running!");
+    </script>
+</body>
+</html>
